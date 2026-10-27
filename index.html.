@@ -1,1 +1,230 @@
 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nigeria Quiz 🇳🇬</title>
+<style>
+:root{--green:#087a45;--light:#f1f8f3;--ink:#17251d}
+*{box-sizing:border-box}
+body{margin:0;font-family:Arial,sans-serif;background:var(--light);color:var(--ink)}
+header{background:var(--green);color:white;padding:20px 16px;text-align:center}
+header h1{margin:5px 0;font-size:27px}
+.flag{font-size:34px}
+main{max-width:600px;margin:auto;padding:16px}
+.panel{background:white;border-radius:16px;padding:18px;margin:14px 0;box-shadow:0 3px 14px #0000000c}
+h2{font-size:21px;line-height:1.35;margin-top:0}
+button{border:0;border-radius:10px;padding:14px 16px;font-size:16px;font-weight:bold;cursor:pointer}
+.primary{background:var(--green);color:white;width:100%}
+.option{background:#f2f5f3;color:#17251d;width:100%;text-align:left;margin:7px 0;border:2px solid transparent}
+.option.selected{border-color:var(--green);background:#e2f4e9}
+.option:disabled{opacity:1}
+.small{color:#647168;font-size:14px}
+#timer{font-size:24px;font-weight:bold;color:var(--green)}
+#status{white-space:pre-wrap;line-height:1.5}
+.hidden{display:none}
+footer{text-align:center;padding:18px;color:#647168;font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <div class="flag">🇳🇬</div>
+  <h1>Nigeria Quiz</h1>
+  <div>Learn • Think • Challenge Yourself</div>
+</header>
+
+<main>
+  <section class="panel">
+    <h2>Challenge Your Mind on Prof. Ben Nwabueze</h2>
+    <p>Answer 3 questions in 3 minutes. No registration required.</p>
+    <p class="small">Test your knowledge and learn something new.</p>
+    <button class="primary" id="startBtn">Start Quiz</button>
+    <p id="status" role="status"></p>
+  </section>
+
+  <section class="panel hidden" id="quizPanel">
+    <div style="display:flex;justify-content:space-between;gap:10px">
+      <span id="progress">Question 1 of 3</span>
+      <span id="timer">03:00</span>
+    </div>
+    <h2 id="questionText">Loading question…</h2>
+    <div id="options"></div>
+    <button class="primary" id="nextBtn" disabled>Next Question</button>
+  </section>
+
+  <section class="panel hidden" id="resultPanel">
+    <h2>Round Complete</h2>
+    <p id="scoreText"></p>
+    <button class="primary" id="againBtn">Play Another Round</button>
+  </section>
+</main>
+
+<footer>Nigeria Quiz • Learning and general knowledge</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const SUPABASE_URL = "https://jyymhfbnhstsbnztteta.supabase.co";
+const SUPABASE_KEY = "sb_publishable_SZh0F5cgKBkHgGyOQqVmxQ_nv79j8Dz";
+
+const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+let attemptId = null;
+let sessionToken = null;
+let questions = [];
+let answers = [];
+let current = 0;
+let seconds = 180;
+let timerId = null;
+let finished = false;
+
+const $ = id => document.getElementById(id);
+
+function status(message) {
+  $("status").textContent = message;
+}
+
+function showTime() {
+  const min = String(Math.floor(seconds / 60)).padStart(2, "0");
+  const sec = String(seconds % 60).padStart(2, "0");
+  $("timer").textContent = `${min}:${sec}`;
+}
+
+function stopTimer() {
+  if (timerId) clearInterval(timerId);
+  timerId = null;
+}
+
+async function startRound() {
+  stopTimer();
+  finished = false;
+  $("startBtn").disabled = true;
+  $("resultPanel").classList.add("hidden");
+  $("quizPanel").classList.add("hidden");
+  status("Loading your questions…");
+
+  try {
+    const { data, error } = await db.rpc("nq_start_round");
+    if (error) throw error;
+
+    const round = Array.isArray(data) ? data[0] : data;
+    if (!round || !round.questions || round.questions.length !== 3) {
+      throw new Error("The database did not return exactly 3 questions.");
+    }
+    if (!round.attempt_id || !round.session_token) {
+      throw new Error("The round response is missing its attempt token.");
+    }
+
+    attemptId = round.attempt_id;
+    sessionToken = round.session_token;
+    questions = round.questions;
+    answers = Array(3).fill(null);
+    current = 0;
+    seconds = 180;
+
+    $("status").textContent = "";
+    $("quizPanel").classList.remove("hidden");
+    showTime();
+    renderQuestion();
+
+    timerId = setInterval(() => {
+      seconds--;
+      showTime();
+      if (seconds <= 0) {
+        stopTimer();
+        finishRound(true);
+      }
+    }, 1000);
+  } catch (err) {
+    status("Could not start the quiz.\n" + err.message +
+      "\nPlease check the Supabase function and permissions.");
+  } finally {
+    $("startBtn").disabled = false;
+  }
+}
+
+function renderQuestion() {
+  const q = questions[current];
+  $("progress").textContent = `Question ${current + 1} of 3`;
+  $("questionText").textContent =
+    q.question || q.question_text || q.text || "Question";
+  $("options").replaceChildren();
+
+  if (!Array.isArray(q.options) || !q.options.length) {
+    status("This question has no answer options. Please check the database.");
+    return;
+  }
+
+  q.options.forEach((option, index) => {
+    const btn = document.createElement("button");
+    btn.className = "option";
+    btn.textContent = `${String.fromCharCode(65 + index)}. ${
+      typeof option === "string" ? option : option.label
+    }`;
+
+    if (answers[current] === index) btn.classList.add("selected");
+
+    btn.onclick = () => {
+      answers[current] = index;
+      renderQuestion();
+    };
+    $("options").appendChild(btn);
+  });
+
+  $("nextBtn").disabled = answers[current] === null;
+  $("nextBtn").textContent =
+    current === 2 ? "Submit Answers" : "Next Question";
+}
+
+$("nextBtn").onclick = async () => {
+  if (answers[current] === null) return;
+  if (current < 2) {
+    current++;
+    renderQuestion();
+  } else {
+    await finishRound(false);
+  }
+};
+
+async function finishRound(timeExpired) {
+  if (finished) return;
+  finished = true;
+  stopTimer();
+  $("nextBtn").disabled = true;
+  $("options").replaceChildren();
+
+  try {
+    const payload = questions.map((q, i) => ({
+      question_id: q.id,
+      answer_index: answers[i]
+    }));
+
+    const { data, error } = await db.rpc("nq_submit_answers", {
+      p_attempt_id: attemptId,
+      p_session_token: sessionToken,
+      p_answers: payload
+    });
+
+    if (error) throw error;
+
+    const result = Array.isArray(data) ? data[0] : data;
+    $("scoreText").textContent =
+      (timeExpired ? "Time is up. " : "") +
+      `Your result: ${result.score ?? result.correct_count ?? "Submitted"} out of 3.`;
+    $("resultPanel").classList.remove("hidden");
+    $("quizPanel").classList.add("hidden");
+    status("");
+  } catch (err) {
+    finished = false;
+    $("quizPanel").classList.remove("hidden");
+    status("Could not submit your answers.\n" + err.message +
+      "\nThe database function may expect a different answer format.");
+  }
+}
+
+$("startBtn").onclick = startRound;
+$("againBtn").onclick = startRound;
+</script>
+</body>
+</html>
+
